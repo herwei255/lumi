@@ -1,0 +1,89 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+}
+
+:root {
+  --background: #080810;
+  --foreground: #f0f0f8;
+  --card: #0f0f1a;
+  --card-foreground: #f0f0f8;
+  --primary: #a78bfa;
+  --primary-foreground: #080810;
+  --secondary: #13131f;
+  --secondary-foreground: #c4c4d4;
+  --muted: #13131f;
+  --muted-foreground: #6b6b8a;
+  --border: rgba(167, 139, 250, 0.1);
+  --input: rgba(255, 255, 255, 0.06);
+  --ring: #a78bfa;
+  --radius: 0.75rem;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    background-color: #080810;
+    color: #f0f0f8;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+.bg-grid {
+  background-image: radial-gradient(circle, rgba(167, 139, 250, 0.1) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+.gradient-text {
+  background: linear-gradient(135deg, #ffffff 0%, #c4b5fd 40%, #7c3aed 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.glow-orb {
+  background: radial-gradient(circle, rgba(124, 58, 237, 0.4) 0%, rgba(167, 139, 250, 0.12) 50%, transparent 70%);
+}
+
+.card-glow {
+  background: linear-gradient(135deg, rgba(167, 139, 250, 0.07) 0%, rgba(167, 139, 250, 0.02) 100%);
+  border: 1px solid rgba(167, 139, 250, 0.1);
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.card-glow:hover {
+  border-color: rgba(167, 139, 250, 0.28);
+  background: linear-gradient(135deg, rgba(167, 139, 250, 0.1) 0%, rgba(167, 139, 250, 0.04) 100%);
+}
+
+.badge {
+  background: rgba(167, 139, 250, 0.08);
+  border: 1px solid rgba(167, 139, 250, 0.18);
+  color: #c4b5fd;
+}
