@@ -77,6 +77,35 @@ def init_db():
         )
     """)
 
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS reminders (
+            id          SERIAL PRIMARY KEY,
+            google_id   TEXT NOT NULL,
+            chat_id     TEXT NOT NULL,
+            message     TEXT NOT NULL,
+            next_run_at TIMESTAMPTZ NOT NULL,
+            recurrence  TEXT,        -- 'daily', 'weekly', 'once'
+            day_of_week INTEGER,     -- 0=Mon ... 6=Sun, for weekly reminders
+            run_time    TIME,        -- time of day to fire (UTC)
+            created_at  TIMESTAMPTZ DEFAULT NOW()
+        )
+    """)
+
+    # Structured facts about the user — name, preferences, life context, etc.
+    # key is a short label ("name", "job", "prefers short replies"), value is the fact.
+    # Upserted by key so facts stay fresh, not duplicated.
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS user_facts (
+            id         SERIAL PRIMARY KEY,
+            user_id    INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            key        TEXT NOT NULL,
+            value      TEXT NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW(),
+            UNIQUE(user_id, key)
+        )
+    """)
+
     conn.commit()
     cur.close()
     conn.close()

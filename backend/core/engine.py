@@ -13,6 +13,8 @@ from core.llm import chat, chat_with_tools
 from db.repository import (
     get_or_create_user,
     get_recent_messages,
+    get_all_facts,
+    save_fact,
     save_message,
     search_similar_messages,
 )
@@ -98,6 +100,25 @@ NOTION_TOOL = {
     },
 }
 
+REMEMBER_TOOL = {
+    "name": "remember_fact",
+    "description": "Save a fact about the user for future conversations. Use this when the user shares something personal or asks you to remember something — their name, job, preferences, goals, anything worth keeping.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "key": {
+                "type": "STRING",
+                "description": "Short label for the fact, e.g. 'name', 'job', 'prefers short replies', 'lives in Singapore'.",
+            },
+            "value": {
+                "type": "STRING",
+                "description": "The fact to remember.",
+            },
+        },
+        "required": ["key", "value"],
+    },
+}
+
 GMAIL_TOOL = {
     "name": "search_emails",
     "description": "Search the user's Gmail inbox. Use this when the user asks about emails, messages they've received, or wants to find a specific email.",
@@ -142,6 +163,13 @@ def process_message(chat_id: str, body: str) -> None:
         recent_contents = {m["content"] for m in recent}
         extra_context = [m for m in similar if m["content"] not in recent_contents]
 
+    # Load stored facts and prepend them to the system prompt
+    facts = get_all_facts(user_id)
+    system = SYSTEM_PROMPT
+    if facts:
+        facts_text = "\n".join(f"- {f['key']}: {f['value']}" for f in facts)
+        system = SYSTEM_PROMPT + f"\n\nWhat you know about this user:\n{facts_text}"
+
     messages = extra_context + recent + [{"role": "user", "content": body}]
 
     google_id = get_google_id_for_chat(chat_id)
@@ -150,7 +178,7 @@ def process_message(chat_id: str, body: str) -> None:
     has_notion = google_id is not None and _has_oauth_token(google_id, "notion")
 
     try:
-        reply = _chat_with_integrations(messages, google_id, chat_id, has_calendar, has_gmail, has_notion)
+        reply = _chat_with_integrations(messages, google_id, chat_id, has_calendar, has_gmail, has_notion, system, user_id)
     except Exception as e:
         print(f"[engine] LLM error for chat {chat_id} (provider: {settings.llm_provider}): {e}")
         reply = "sorry, hit a snag — try again in a sec"
@@ -158,6 +186,9 @@ def process_message(chat_id: str, body: str) -> None:
     save_message(user_id, "user", body, embedding)
     reply_embedding = get_embedding(reply)
     save_message(user_id, "assistant", reply, reply_embedding)
+
+    # Auto-extract facts from this exchange in the background
+    _extract_facts(user_id, body, reply)
 
     messenger.send_message(chat_id, reply)
     print(f"[engine] [{settings.llm_provider}] Replied to {chat_id}: {reply[:80]}...")
@@ -184,6 +215,8 @@ def _chat_with_integrations(
     has_calendar: bool,
     has_gmail: bool,
     has_notion: bool = False,
+    system: str = SYSTEM_PROMPT,
+    user_id: int | None = None,
 ) -> str:
     """
     Call Gemini with whichever tools are available for this user.
@@ -197,8 +230,9 @@ def _chat_with_integrations(
     if has_notion:
         tools.append(NOTION_TOOL)
     tools.append(REMINDER_TOOL)
+    tools.append(REMEMBER_TOOL)
 
-    result = chat_with_tools(messages=messages, system=SYSTEM_PROMPT, tools=tools)
+    result = chat_with_tools(messages=messages, system=system, tools=tools)
 
     if result.get("type") != "tool_call":
         return result.get("text", "")
@@ -261,13 +295,53 @@ def _chat_with_integrations(
         result_notion = add_to_inbox(google_id=google_id, title=title, content=content)
         tool_output = f"Added to Notion: {result_notion.get('url', '')}" if result_notion["ok"] else f"Failed: {result_notion.get('error')}"
 
+    elif tool_name == "remember_fact":
+        key = tool_args.get("key", "")
+        value = tool_args.get("value", "")
+        if key and value and user_id:
+            save_fact(user_id, key, value)
+            print(f"[engine] Saved fact for user {user_id}: {key} = {value}")
+        tool_output = f"Got it, remembered: {key} = {value}"
+
     else:
         return result.get("text", "")
 
     final = chat_with_tools(
         messages=messages,
-        system=SYSTEM_PROMPT,
+        system=system,
         tools=tools,
         tool_result={"name": tool_name, "content": tool_output},
     )
     return final.get("text", "couldn't fetch that right now")
+
+
+def _extract_facts(user_id: int, user_msg: str, assistant_reply: str) -> None:
+    """
+    After each exchange, ask the LLM to silently extract any new facts worth remembering.
+    Runs a cheap, focused prompt — won't fire if there's nothing to extract.
+    """
+    prompt = f"""Read this conversation exchange and extract any personal facts worth remembering about the user (name, job, location, preferences, goals, relationships, etc.).
+
+User: {user_msg}
+Assistant: {assistant_reply}
+
+Reply with ONLY a JSON array of {{\"key\": \"...\", \"value\": \"...\"}} objects, or an empty array [] if there's nothing new to remember. No explanation, just JSON."""
+
+    try:
+        result = chat(
+            messages=[{"role": "user", "content": prompt}],
+            system="You extract personal facts from conversations. Output only valid JSON arrays.",
+        )
+        import json, re
+        # Strip markdown code fences if present
+        cleaned = re.sub(r"```(?:json)?|```", "", result).strip()
+        facts = json.loads(cleaned)
+        for fact in facts:
+            key = fact.get("key", "").strip()
+            value = fact.get("value", "").strip()
+            if key and value:
+                save_fact(user_id, key, value)
+                print(f"[engine] Auto-extracted fact: {key} = {value}")
+    except Exception as e:
+        # Silent failure — fact extraction is best-effort
+        print(f"[engine] Fact extraction failed: {e}")

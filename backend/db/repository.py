@@ -66,6 +66,35 @@ def get_recent_messages(user_id: int, limit: int = 10) -> list[dict]:
     return [{"role": row[0], "content": row[1]} for row in reversed(rows)]
 
 
+def save_fact(user_id: int, key: str, value: str) -> None:
+    """Upsert a user fact by key. Updates value + updated_at if key already exists."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO user_facts (user_id, key, value)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (user_id, key)
+        DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+    """, (user_id, key.lower().strip(), value.strip()))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def get_all_facts(user_id: int) -> list[dict]:
+    """Return all stored facts for a user as a list of {key, value} dicts."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT key, value FROM user_facts WHERE user_id = %s ORDER BY updated_at DESC",
+        (user_id,),
+    )
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return [{"key": row[0], "value": row[1]} for row in rows]
+
+
 def search_similar_messages(user_id: int, embedding: list[float], limit: int = 5) -> list[dict]:
     """
     Find messages semantically similar to `embedding`, skipping the most recent 10.
