@@ -52,6 +52,33 @@ CALENDAR_TOOL = {
 }
 
 
+REMINDER_TOOL = {
+    "name": "set_reminder",
+    "description": "Set a reminder for the user. Use this when they ask to be reminded about something at a specific time or on a schedule.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "message": {
+                "type": "STRING",
+                "description": "What to remind the user about.",
+            },
+            "recurrence": {
+                "type": "STRING",
+                "description": "How often: 'once', 'daily', or 'weekly'.",
+            },
+            "time_utc": {
+                "type": "STRING",
+                "description": "Time to send the reminder in HH:MM format (UTC). E.g. '01:00' for 9am SGT.",
+            },
+            "day_of_week": {
+                "type": "INTEGER",
+                "description": "For weekly reminders: day of week (0=Monday, 6=Sunday).",
+            },
+        },
+        "required": ["message", "recurrence", "time_utc"],
+    },
+}
+
 NOTION_TOOL = {
     "name": "add_to_notion_inbox",
     "description": "Add an item to the user's Notion inbox. Use this when the user wants to save something, add a task, note, or idea to Notion.",
@@ -120,13 +147,10 @@ def process_message(chat_id: str, body: str) -> None:
     google_id = get_google_id_for_chat(chat_id)
     has_calendar = google_id is not None and _has_oauth_token(google_id, "google_calendar")
     has_gmail = google_id is not None and _has_oauth_token(google_id, "gmail")
-    has_notion = bool(settings.notion_api_key and settings.notion_database_id)
+    has_notion = google_id is not None and _has_oauth_token(google_id, "notion")
 
     try:
-        if has_calendar or has_gmail or has_notion:
-            reply = _chat_with_integrations(messages, google_id, has_calendar, has_gmail, has_notion)
-        else:
-            reply = chat(messages=messages, system=SYSTEM_PROMPT)
+        reply = _chat_with_integrations(messages, google_id, chat_id, has_calendar, has_gmail, has_notion)
     except Exception as e:
         print(f"[engine] LLM error for chat {chat_id} (provider: {settings.llm_provider}): {e}")
         reply = "sorry, hit a snag — try again in a sec"
@@ -156,6 +180,7 @@ def _has_oauth_token(google_id: str, provider: str) -> bool:
 def _chat_with_integrations(
     messages: list[dict],
     google_id: str | None,
+    chat_id_ctx: str,
     has_calendar: bool,
     has_gmail: bool,
     has_notion: bool = False,
@@ -171,6 +196,7 @@ def _chat_with_integrations(
         tools.append(GMAIL_TOOL)
     if has_notion:
         tools.append(NOTION_TOOL)
+    tools.append(REMINDER_TOOL)
 
     result = chat_with_tools(messages=messages, system=SYSTEM_PROMPT, tools=tools)
 
@@ -203,10 +229,36 @@ def _chat_with_integrations(
         else:
             tool_output = "No emails found."
 
+    elif tool_name == "set_reminder":
+        from datetime import datetime, timezone, timedelta
+        from db.connection import get_connection
+
+        message = tool_args.get("message", "")
+        recurrence = tool_args.get("recurrence", "once")
+        time_utc = tool_args.get("time_utc", "01:00")
+        day_of_week = tool_args.get("day_of_week")
+
+        hour, minute = map(int, time_utc.split(":"))
+        now = datetime.now(timezone.utc)
+        next_run = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if next_run <= now:
+            next_run += timedelta(days=1)
+
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO reminders (google_id, chat_id, message, next_run_at, recurrence, day_of_week, run_time)
+            VALUES (%s, %s, %s, %s, %s, %s, %s::time)
+        """, (google_id or "", chat_id_ctx, message, next_run, recurrence, day_of_week, time_utc))
+        conn.commit()
+        cur.close()
+        conn.close()
+        tool_output = f"Reminder set: '{message}' ({recurrence} at {time_utc} UTC)"
+
     elif tool_name == "add_to_notion_inbox":
         title = tool_args.get("title", "Untitled")
         content = tool_args.get("content", "")
-        result_notion = add_to_inbox(title=title, content=content)
+        result_notion = add_to_inbox(google_id=google_id, title=title, content=content)
         tool_output = f"Added to Notion: {result_notion.get('url', '')}" if result_notion["ok"] else f"Failed: {result_notion.get('error')}"
 
     else:

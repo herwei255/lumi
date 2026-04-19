@@ -307,3 +307,76 @@ async def gmail_status(google_id: str):
     cur.close()
     conn.close()
     return JSONResponse({"connected": row is not None})
+
+
+# ── Notion OAuth ──────────────────────────────────────────────────────────────
+
+def _notion_callback_url() -> str:
+    return f"{settings.backend_url}/auth/notion/callback"
+
+
+@router.get("/notion")
+async def notion_connect(google_id: str):
+    """Start the Notion OAuth flow."""
+    params = {
+        "client_id": settings.notion_client_id,
+        "redirect_uri": _notion_callback_url(),
+        "response_type": "code",
+        "owner": "user",
+        "state": google_id,
+    }
+    url = "https://api.notion.com/v1/oauth/authorize?" + urlencode(params)
+    return RedirectResponse(url)
+
+
+@router.get("/notion/callback")
+async def notion_callback(code: str, state: str):
+    """Exchange Notion auth code for an access token and store it."""
+    google_id = state
+
+    resp = httpx.post(
+        "https://api.notion.com/v1/oauth/token",
+        auth=(settings.notion_client_id, settings.notion_client_secret),
+        json={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": _notion_callback_url(),
+        },
+    )
+    resp.raise_for_status()
+    data = resp.json()
+
+    # Notion tokens don't expire — no refresh_token needed
+    access_token = data["access_token"]
+    # workspace_id is useful to store so we know which workspace the user picked
+    workspace_id = data.get("workspace_id", "")
+
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO oauth_tokens (google_id, provider, access_token, refresh_token, expires_at)
+        VALUES (%s, 'notion', %s, %s, NULL)
+        ON CONFLICT (google_id, provider)
+        DO UPDATE SET access_token = EXCLUDED.access_token,
+                      refresh_token = EXCLUDED.refresh_token
+    """, (google_id, access_token, workspace_id))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return RedirectResponse(f"{settings.frontend_url}/onboarding?notion=connected")
+
+
+@router.get("/notion/status")
+async def notion_status(google_id: str):
+    """Check if a user has connected Notion."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT id FROM oauth_tokens WHERE google_id = %s AND provider = 'notion'",
+        (google_id,),
+    )
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    return JSONResponse({"connected": row is not None})

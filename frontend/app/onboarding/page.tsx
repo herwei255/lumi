@@ -25,6 +25,9 @@ function OnboardingInner() {
   const [gmailConnected, setGmailConnected] = useState(
     searchParams.get("gmail") === "connected"
   );
+  const [notionConnected, setNotionConnected] = useState(
+    searchParams.get("notion") === "connected"
+  );
 
   // Redirect to home if not signed in
   useEffect(() => {
@@ -49,6 +52,11 @@ function OnboardingInner() {
     fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/gmail/status?google_id=${id}`)
       .then((r) => r.json())
       .then((d) => { if (d.connected) setGmailConnected(true); })
+      .catch(() => {});
+
+    fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/notion/status?google_id=${id}`)
+      .then((r) => r.json())
+      .then((d) => { if (d.connected) setNotionConnected(true); })
       .catch(() => {});
   }, [status, session?.user?.id]);
 
@@ -194,6 +202,36 @@ function OnboardingInner() {
             </button>
           ) : (
             <p style={{ color: "#a78bfa", fontSize: 14, marginTop: 16 }}>✓ Gmail connected</p>
+          )}
+        </Step>
+
+        {/* Step 4 — Notion (locked until Telegram linked) */}
+        <Step
+          number={4}
+          title="Connect Notion"
+          description="Let Lumi save things to your Notion. Say 'add this to my inbox' and it'll appear in your workspace."
+          done={notionConnected}
+          locked={!telegramLinked}
+        >
+          {!notionConnected ? (
+            <button
+              disabled={!telegramLinked}
+              onClick={() => {
+                window.location.href = `${process.env.NEXT_PUBLIC_API_URL}/auth/notion?google_id=${session?.user?.id}`;
+              }}
+              style={{
+                background: telegramLinked ? "#a78bfa" : "rgba(167,139,250,0.2)",
+                color: telegramLinked ? "#080810" : "#6b6b8a",
+                fontWeight: 600,
+                padding: "12px 24px", borderRadius: 999, fontSize: 15,
+                border: "none", cursor: telegramLinked ? "pointer" : "not-allowed",
+                marginTop: 20,
+              }}
+            >
+              Connect Notion →
+            </button>
+          ) : (
+            <p style={{ color: "#a78bfa", fontSize: 14, marginTop: 16 }}>✓ Notion connected</p>
           )}
         </Step>
       </div>

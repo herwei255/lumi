@@ -27,9 +27,9 @@ class Settings(BaseSettings):
     google_client_id: str = ""
     google_client_secret: str = ""
 
-    # Notion integration (internal API key)
-    notion_api_key: str = ""
-    notion_database_id: str = ""
+    # Notion OAuth
+    notion_client_id: str = ""
+    notion_client_secret: str = ""
 
     # Set DEBUG=true locally to skip webhook signature validation
     debug: bool = False
