@@ -2,12 +2,10 @@
 
 import { signIn, signOut, useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
+import { useEffect } from "react";
 
-// ─── Feature flag ────────────────────────────────────────────────────────────
-// Set NEXT_PUBLIC_TELEGRAM_AUTH_ENABLED=true in .env.local once you have a
-// real domain set in BotFather. Until then, the Telegram button shows as
-// "coming soon".
 const TELEGRAM_AUTH_ENABLED = process.env.NEXT_PUBLIC_TELEGRAM_AUTH_ENABLED === "true";
+const TELEGRAM_BOT_USERNAME = "lumi_butlerbot";
 
 const btnBase: React.CSSProperties = {
   width: "100%",
@@ -29,6 +27,36 @@ export function AuthButtons() {
   const { data: session } = useSession();
   const router = useRouter();
 
+  // Load the Telegram widget script and wire up the auth callback
+  useEffect(() => {
+    if (!TELEGRAM_AUTH_ENABLED) return;
+
+    (window as any).onTelegramAuth = async (user: Record<string, unknown>) => {
+      const result = await signIn("telegram", {
+        telegramData: JSON.stringify(user),
+        redirect: false,
+      });
+      if (result?.ok) router.push("/onboarding");
+    };
+
+    const script = document.createElement("script");
+    script.src = "https://telegram.org/js/telegram-widget.js?22";
+    script.setAttribute("data-telegram-login", TELEGRAM_BOT_USERNAME);
+    script.setAttribute("data-size", "large");
+    script.setAttribute("data-onauth", "onTelegramAuth(user)");
+    script.setAttribute("data-request-access", "write");
+    script.async = true;
+
+    const container = document.getElementById("telegram-widget-container");
+    if (container) container.appendChild(script);
+  }, [router]);
+
+  const handleTelegramClick = () => {
+    // The widget script renders an <a> tag inside the container — click it to open the auth popup
+    const btn = document.querySelector<HTMLElement>("#telegram-widget-container a");
+    if (btn) btn.click();
+  };
+
   if (session) {
     return (
       <button
@@ -42,11 +70,12 @@ export function AuthButtons() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
-      {/* Telegram — enabled once domain is configured */}
+      {/* Hidden Telegram widget container — script fires onTelegramAuth callback */}
+      <div id="telegram-widget-container" style={{ display: "none" }} />
+
+      {/* Telegram button */}
       <button
-        onClick={() => TELEGRAM_AUTH_ENABLED
-          ? undefined /* TODO: trigger Telegram Login Widget */
-          : null}
+        onClick={TELEGRAM_AUTH_ENABLED ? handleTelegramClick : undefined}
         disabled={!TELEGRAM_AUTH_ENABLED}
         title={TELEGRAM_AUTH_ENABLED ? undefined : "Coming soon — available after launch"}
         style={{

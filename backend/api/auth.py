@@ -4,7 +4,10 @@ Auth endpoints:
 - Google Calendar OAuth (connect calendar to a web account)
 """
 
+import hashlib
+import hmac
 import secrets
+import time
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlencode
 
@@ -380,3 +383,57 @@ async def notion_status(google_id: str):
     cur.close()
     conn.close()
     return JSONResponse({"connected": row is not None})
+
+
+# ── Telegram Login Widget verify ──────────────────────────────────────────────
+
+class TelegramAuthData(BaseModel):
+    id: int
+    first_name: str
+    username: str | None = None
+    photo_url: str | None = None
+    auth_date: int
+    hash: str
+
+
+@router.post("/telegram-verify")
+async def telegram_verify(data: TelegramAuthData):
+    """
+    Called by the frontend after the Telegram Login Widget fires.
+    Verifies the HMAC, then finds or creates a web_users row keyed by telegram_id.
+    Returns the user info NextAuth needs to create a session.
+    """
+    # 1. Verify freshness — reject if older than 1 day
+    if time.time() - data.auth_date > 86400:
+        return JSONResponse({"error": "auth_date too old"}, status_code=401)
+
+    # 2. Verify HMAC
+    secret_key = hashlib.sha256(settings.telegram_bot_token.encode()).digest()
+    fields = {k: v for k, v in data.model_dump().items() if k != "hash" and v is not None}
+    check_string = "\n".join(f"{k}={v}" for k, v in sorted(fields.items()))
+    computed = hmac.new(secret_key, check_string.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(computed, data.hash):
+        return JSONResponse({"error": "invalid hash"}, status_code=401)
+
+    # 3. Use "tg_<telegram_id>" as a synthetic google_id for Telegram-only users
+    synthetic_id = f"tg_{data.id}"
+    chat_id = str(data.id)
+
+    conn = get_connection()
+    cur = conn.cursor()
+    # Ensure web_users row exists and has telegram_chat_id set
+    cur.execute("""
+        INSERT INTO web_users (google_id, telegram_chat_id)
+        VALUES (%s, %s)
+        ON CONFLICT (google_id) DO UPDATE SET telegram_chat_id = EXCLUDED.telegram_chat_id
+    """, (synthetic_id, chat_id))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return JSONResponse({
+        "id": synthetic_id,
+        "name": data.first_name + (f" @{data.username}" if data.username else ""),
+        "email": f"{data.username or data.id}@telegram.user",
+        "image": data.photo_url,
+    })
