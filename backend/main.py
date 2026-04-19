@@ -11,6 +11,7 @@ from fastapi import FastAPI
 
 from api.auth import router as auth_router
 from api.webhooks import router as webhook_router
+from config import settings
 from db.init_db import init_db
 from fastapi.middleware.cors import CORSMiddleware
 
