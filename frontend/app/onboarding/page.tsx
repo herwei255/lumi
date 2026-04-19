@@ -2,10 +2,18 @@
 
 import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { SignOutButton } from "../components/SignInButton";
 
 export default function Onboarding() {
+  return (
+    <Suspense fallback={<LoadingScreen />}>
+      <OnboardingInner />
+    </Suspense>
+  );
+}
+
+function OnboardingInner() {
   const { data: session, status } = useSession();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -191,7 +199,7 @@ export default function Onboarding() {
       </div>
     </div>
   );
-}
+}  // end OnboardingInner
 
 function Step({
   number, title, description, done, locked, children,
