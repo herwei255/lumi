@@ -7,7 +7,7 @@ The developer (Her Wei) is vibe coding this — move fast, explain things as we 
 
 ---
 
-## Current State — Phase 3 (in progress)
+## Current State — Phase 6 in progress (local)
 
 **What's working:**
 - Telegram webhook receives messages ✅
@@ -17,20 +17,25 @@ The developer (Her Wei) is vibe coding this — move fast, explain things as we 
 - Persistent memory via Postgres — conversations survive restarts ✅
 - Vector embeddings via `gemini-embedding-001` (768 dims) ✅
 - Semantic search — pulls relevant past context before each LLM call ✅
-- `./dev.sh` — one command starts everything ✅
 - Next.js frontend — landing page + onboarding flow ✅
 - Google Sign-In (NextAuth v5 + Google OAuth) ✅
+- Telegram Login Widget — sign in via Telegram (requires real domain, feature-flagged) ✅
 - Telegram account linking (web ↔ Telegram chat_id via link code) ✅
 - Google Calendar OAuth + tool use — Lumi can answer calendar questions ✅
-- Gmail OAuth + tool use — Lumi can search/read emails ✅ (just added)
+- Gmail OAuth + tool use — Lumi can search/read emails ✅
+- Notion OAuth + tool use — add items to any user's own Notion workspace ✅
+- Morning briefing — Celery Beat sends daily summary at 9am SGT (1am UTC) ✅
+- Custom reminders — "remind me every day at 9am to drink water" → saves to DB → fires via Celery Beat ✅
+- User facts memory — explicit (`remember_fact` tool) + auto-extracted after every exchange ✅
 
 **What's not working yet:**
-- Notion integration
-- Proactive messaging (Lumi can't text first)
-- Deployed anywhere (still local + ngrok)
+- Cancel reminders via chat
+- Deployed anywhere (still local + ngrok; Railway setup started but paused)
 
-**Known setup requirement:**
+**Known setup requirements:**
 - Gmail API + Google Calendar API must be enabled in Google Cloud Console → APIs & Services → Enabled APIs
+- Notion: create a **Public** integration, add redirect URI, get OAuth client ID + secret → `NOTION_CLIENT_ID` / `NOTION_CLIENT_SECRET` in `.env`
+- User's Notion workspace needs a database (Lumi auto-finds one named "Lumi Inbox", falls back to first database)
 
 ---
 
@@ -43,7 +48,7 @@ The developer (Her Wei) is vibe coding this — move fast, explain things as we 
 - **Postgres + pgvector** — persistent message storage + vector similarity search
 - **Next.js (App Router)** — frontend landing page + onboarding
 - **NextAuth.js v5** — Google Sign-In for the web frontend
-- **Python 3.10**
+- **Python 3.11** (pinned via `.python-version`)
 - **Docker** — runs Redis + Postgres locally
 
 ## Why these choices?
@@ -72,12 +77,13 @@ lumi/
 │   │   └── repository.py       # DB read/write: users, messages, semantic search
 │   ├── integrations/
 │   │   ├── google_calendar.py  # Google Calendar API — fetch events, manage tokens
-│   │   └── gmail.py            # Gmail API — search/read emails, manage tokens
+│   │   ├── gmail.py            # Gmail API — search/read emails, manage tokens
+│   │   └── notion.py           # Notion API — add pages to inbox database
 │   ├── messaging/
 │   │   ├── base.py             # Abstract BaseMessenger
 │   │   └── telegram.py         # Telegram send/receive/validate
-│   ├── celery_app.py
-│   ├── tasks.py                # Celery task: handle_message
+│   ├── celery_app.py           # Celery config + Beat schedule (briefing + reminders)
+│   ├── tasks.py                # Celery tasks: handle_message, send_morning_briefings, check_reminders
 │   ├── main.py                 # FastAPI entrypoint
 │   ├── worker.py               # Celery worker entrypoint
 │   ├── config.py               # All settings via pydantic-settings
@@ -107,7 +113,7 @@ That's it. The script handles everything:
 - Starts Docker (Redis + Postgres)
 - Starts ngrok, grabs the URL automatically
 - Registers the Telegram webhook
-- Starts FastAPI (`cd backend && uvicorn main:app`) + Celery with labeled logs
+- Starts FastAPI (`cd backend && uvicorn main:app`) + Celery with `--beat` flag (enables scheduler) + labeled logs
 
 Ctrl+C stops everything cleanly.
 
@@ -123,8 +129,8 @@ docker-compose up -d
 # Tab 1 — FastAPI
 cd ~/Code/lumi/backend && source ../venv/bin/activate && uvicorn main:app --reload --port 8000
 
-# Tab 2 — Celery
-cd ~/Code/lumi/backend && source ../venv/bin/activate && celery -A worker worker --loglevel=info
+# Tab 2 — Celery (--beat enables the scheduler for reminders + morning briefing)
+cd ~/Code/lumi/backend && source ../venv/bin/activate && celery -A worker worker --beat --loglevel=info
 
 # Tab 3 — ngrok
 ngrok http 8000
@@ -147,11 +153,18 @@ Calendar callback: `http://localhost:8000/auth/google-calendar/callback`
 Gmail callback: `http://localhost:8000/auth/gmail/callback`
 
 ### Telegram Login Widget
-Greyed out on the landing page with a "soon" badge. Fully wired but disabled because Telegram's Login Widget requires a real domain (not localhost).  
+Implemented but feature-flagged. Requires a real domain — Telegram won't work on localhost.  
 **To enable after deploy:**
 1. BotFather → `/setdomain` → `@lumi_butlerbot` → enter real domain
 2. Set `NEXT_PUBLIC_TELEGRAM_AUTH_ENABLED=true` in production env
-3. Implement widget trigger in `SignInButton.tsx` where the TODO comment is
+
+Telegram-only users get a synthetic `google_id` of `tg_<telegram_id>` so the rest of the system works unchanged.
+
+### User Facts Memory
+Two layers — `user_facts` table stores key/value facts per user.
+- **Explicit**: user says "remember my name is X" → `remember_fact` tool saves it
+- **Auto-extracted**: after every exchange, a silent LLM call scans for facts to keep
+- Facts are injected into the system prompt so Lumi actually uses them every reply
 
 ### Gemini Tool Use
 `core/llm.py::chat_with_tools()` sends function definitions to Gemini via REST.  
@@ -164,8 +177,9 @@ Greyed out on the landing page with a "soon" badge. Fully wired but disabled bec
 
 ## Known Issues
 - ngrok URL changes every restart — `dev.sh` handles this automatically
-- Python 3.10 will lose Google SDK support in late 2026 — upgrade to 3.11+ eventually
 - Celery deprecation warning about `broker_connection_retry_on_startup` — harmless
+- Gemini tool use: response parts must ALL be scanned for `functionCall` (not just `parts[0]`) — already fixed in `llm.py`
+- `toolConfig: {functionCallingConfig: {mode: "AUTO"}}` required in Gemini API call or tools won't fire — already set
 
 ---
 
@@ -173,21 +187,30 @@ Greyed out on the landing page with a "soon" badge. Fully wired but disabled bec
 
 ### Phase 1 — Bot MVP ✅
 ### Phase 2 — Persistent Memory ✅
-### Phase 3 — Integrations (in progress)
+### Phase 3 — Integrations ✅
 - Google Calendar OAuth + tool use ✅
 - Gmail OAuth + tool use ✅
 - Web frontend + onboarding ✅
 
-### Phase 4 — Notion Integration
-- Add items to Notion inbox via chat
+### Phase 4 — Notion Integration ✅
+- Add items to Notion inbox via chat ✅
+- OAuth flow — each user connects their own Notion workspace ✅
+- Auto-finds "Lumi Inbox" database, falls back to first database ✅
 
-### Phase 5 — Proactive Messaging
-- Celery Beat for scheduled messages
-- "Remind me every Monday at 9am"
+### Phase 5 — Proactive Messaging ✅
+- Morning briefing via Celery Beat at 9am SGT ✅
+- Custom reminders: "remind me every day at 9am to drink water" ✅
+- Reminders stored in DB, fired by `check_reminders` task every minute ✅
 
-### Phase 6 — Deploy
-- Move from ngrok to Railway or Render
-- Persistent URL = no more webhook re-registration
+### Phase 6 (bonus features, done locally) ✅
+- User facts memory — explicit + auto-extracted ✅
+- Telegram Login Widget (feature-flagged, needs real domain) ✅
+- Notion OAuth (multi-user, each connects own workspace) ✅
+
+### Phase 7 — Polish + Deploy
+- Cancel reminders via chat
+- Deploy (Railway paused — lumi-web, lumi-worker, lumi-frontend services exist)
+- To resume Railway: set DATABASE_URL, REDIS_URL, BACKEND_URL, FRONTEND_URL per service
 
 ---
 
